@@ -1,27 +1,141 @@
-The file chipseq.makefile can be used with the make program to trim, align,
-filter and peak call ChIP-seq libraries. In the same directory as the raw
-sequencing reads, execute the command:
+# ChIP-Seq Pipeline
 
-$ make -f chipseq.makefile MARK=H3K4me3 INPUT=input ASSEMBLY=assembly.fa
+## Introduction
 
-The MARK variable is the base file name for the raw reads of the histone
-modification libraries. In the example above, the program will expect two
-files, H3K4me3.R1.fastq.gz and H3K4me3.R2.fastq.gz, to exist in the directory.
-Similarly, the INPUT variable is the base name for the control/input DNA
-reads. The files input.R1.fastq.gz and input.R2.fastq.gz are expected in
-the example. Finally, the ASSEMBLY variable is a path to a fasta file
-containing the sequences of the genome the reads should be aligned to. This
-file does not need to be in the same directory as long as the full path to
-it is specified.
+This pipeline generates a set of peak calls for histone modification marks
+from raw sequencing data. It can be run on multiple marks simultaneously.
 
-In the makefile's current state, the following commands are expected to
-be available: bwa, samtools, macs2, java. Also, the environmental variable
-$PICARD should be set so that $PICARD/picard.jar properly references the
-Picard tools program. Trimmomatic should also be installed, see below.
+## Input Files
 
-A few modifications should be made to this makefile before running on your
-own data. First, the Trimmomatic command on line 30 needs to be modified
-so that the paths to the jar file and the adapter sequences match your
-own system. The macs2 commands on lines 2 and 5 have a -g argument which
-should be changed to match the size of your target genome (it is currently
-configured for the chicken genome).
+The following files are required for input to the pipeline:
+
+    * Histone modification read file (gzipped fastq format)
+    * Control/Input read file (gzipped fastq format)
+    * Reference genome assembly (fasta format)
+
+Multiple read files for different histone marks can be used by the pipeline
+and the same set of control reads will be used. While the FAANG consortium
+guidelines only require single-end reads for ChIP-seq assays, the pipeline
+can be run with a paired-end option if you have paired-end data.
+
+The reference genome assembly can be downloaded from Ensembl, NCBI, etc.
+using the wget command. Below are example commands to download various
+genomes from Ensembl.
+
+    # Chicken
+    wget ftp://ftp.ensembl.org/pub/release-83/fasta/gallus_gallus/dna/Gallus_gallus.Galgal4.dna.toplevel.fa.gz
+    # Cattle
+    wget ftp://ftp.ensembl.org/pub/release-83/fasta/bos_taurus/dna/Bos_taurus.UMD3.1.dna.toplevel.fa.gz
+    # Pig
+    wget ftp://ftp.ensembl.org/pub/release-83/fasta/sus_scrofa/dna/Sus_scrofa.Sscrofa10.2.dna.toplevel.fa.gz
+
+The assembly file must be unzipped:
+
+    gunzip Gallus_gallus.Galgal4.dna.toplevel.fa.gz
+    gunzip Bos_taurus.UMD3.1.dna.toplevel.fa.gz
+    gunzip Sus-scrofa.Sscrofa10.2.dna.toplevel.fa.gz
+
+## Installation and Requirements
+
+### Requirements
+
+The following tools must be installed on your machine:
+
+    - [Python](https://www.python.org/downloads/)
+    - [Cutadapt](https://pypi.python.org/pypi/cutadapt)
+    - [Trim Galore](http://www.bioinformatics.babraham.ac.uk/projects/trim_galore/)
+    - [BWA](http://bio-bwa.sourceforge.net/)
+    - [Java](https://www.java.com/en/download/)
+    - [Picard Tools](http://broadinstitute.github.io/picard/)
+    - [Samtools](http://samtools.sourceforge.net/)
+
+If you are running this on a cluster using the SLURM scheduler, a script is
+included to submit this pipeline as a job, loading the required software
+modules. You will have to contact your system administrator to ensure they
+are installed.
+
+### Installation
+
+You will need to install the [git](https://git-scm.com/downloads) tool on
+system if it's not already installed.
+
+While in the directory with your data, download the pipeline scripts:
+
+    git clone https://github.com/kernco/chipseq-pipeline.git
+
+Alternatively, you can download a zip file from the Github [project page](https://github.com/kernco/chipseq-pipeline/archive/master.zip) and unzip
+it.
+
+## Running the Pipeline
+
+The pipeline is executed with the command
+
+    ./chipseq-pipeline/run_pipeline.sh [args]
+
+from the directory containing your data, or if you're running on a SLURM
+cluster:
+
+    sbatch [sbatch-args] ./chipseq-pipeline/slurm_script.sh [args]
+
+The [sbatch-args] will depend on the configuration of your cluster. Contact
+your system administrator if you're unsure what arguments are required.
+
+The pipeline takes the following arguments:
+
+```
+    --broad             Filenames without the .fq.gz to do broad peak calling
+                        on. For example, '--broad H3K27me3' will assume a
+                        file H3K27me3.fq.gz exists in the current directory.
+                        Multiple files/marks can be specified by separating
+                        them by commas.
+    --narrow            Same as --broad but does narrow peak calling.
+    --input             Similar to --broad and --narrow, specifying the
+                        control reads.
+    --assembly          The filename of the reference genome assembly.
+    --genome_size       The size of the mappable genome. We use 1.047e9 for
+                        chicken (Galgal4). Generally, this is the number of
+                        bases in non-repeat regions of the genome. A good
+                        place to get this number is from the "Golden Path
+                        Length" listed on the Ensembl page for the assembly
+                        (e.g. http://www.ensembl.org/Gallus_gallus/Info/Annotation).
+    --paired_end        Set this flag to run the pipeline with paired-end
+                        reads. When this flag is set, the pipeline will expect
+                        x.R1.fq.gz and x.R2.fq.gz for all x specified in the
+                        --broad, --narrow, and --input arguments.
+```
+
+### Output Files
+
+A number of files are generated by programs run by the pipeline. The most
+useful ones are listed here.
+
+    * X\_peaks.broadPeak - A BED file containing broad peaks identified.
+    * X\_peaks.narrowPeak - A BED file containing narrow peaks identified.
+    * X.filtered.bam - The read alignments with duplicates marked and low
+                       quality alignments removed.
+
+### Example command
+
+We have a directory with four read files from 3 histone modification marks
+and the control reads from chicken, as well as the chicken genome file:
+
+    * H3K4me3.fq.gz
+    * H3K27me3.fq.gz
+    * H3K4me1.fq.gz
+    * control.fq.gz
+    * Galgal4.fa
+
+We want to do broad peak calling on the H3K27me3 marks and narrow peak calling
+on the H3K4me1 and H3K4me3 marks. To run the pipeline, we execute the
+following command:
+
+    ./chipseq-pipeline/run_pipeline.sh --broad H3K27me3 --narrow H3K4me3,H3K4me1 --input control --assembly Galgal4.fa --genome_size 1.047e9
+
+When the pipeline finishes running, the peak calls will be in these output files:
+
+    * H3K4me3\_peaks.narrowPeak
+    * H3K4me1\_peaks.narrowPeak
+    * H3K27me3\_peaks.broadPeak
+
+There will also be some additional files that were created during the
+pipeline's execution, such as BAM files containing read alignments.
